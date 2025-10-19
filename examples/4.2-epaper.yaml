@@ -1,0 +1,210 @@
+esphome:
+  name: display-soggiorno
+  friendly_name: display-soggiorno
+
+esp32:
+  board: esp32-s3-devkitc-1
+  framework:
+    type: esp-idf
+
+# Enable logging
+logger:
+
+# Enable Home Assistant API
+api:
+  encryption:
+    key: !secret encryption_key
+
+ota:
+  - platform: esphome
+    password: !secret ota_password
+
+wifi:
+  ssid: !secret wifi_ssid
+  password: !secret wifi_password
+
+  # Enable fallback hotspot (captive portal) in case wifi connection fails
+  ap:
+    ssid: "Display-Sala Fallback Hotspot"
+    password: !secret wifi_fallback_password
+
+captive_portal:
+
+external_components:
+  - source: github://pr#6209
+    components: [ waveshare_epaper ]
+
+output:
+  - platform: gpio
+    pin: 7
+    id: pin_7
+    inverted: false
+
+switch:
+  - platform: output
+    id: pin7_high
+    output: pin_7
+    restore_mode: ALWAYS_ON
+
+binary_sensor:
+  - platform: gpio
+    pin: GPIO2
+    id: set_mode
+    internal: true
+    on_press:
+      - lambda: |-
+          id(room_mode) = id(room_mode) + 1;
+          if (id(room_mode) > 2) {
+            id(room_mode) = 0;
+          }
+      - component.update: eink
+      # TODO: send the new value to HA
+  - platform: gpio
+    pin: GPIO4
+    id: set_temp_down
+    internal: true
+    on_press:
+      - lambda: |-
+          id(target_temp_set_room) = id(target_temp_set_room) - 0.5;
+          id(room_mode) = 2; // if user changes temp, set mode to manual
+      - component.update: eink
+      # TODO: send the new value to HA
+  - platform: gpio
+    pin: GPIO6
+    id: set_temp_up
+    internal: true
+    on_press:
+      - lambda: |-
+          id(target_temp_set_room) = id(target_temp_set_room) + 0.5;
+          id(room_mode) = 2; // if user changes temp, set mode to manual
+      - component.update: eink
+      # TODO: send the new value to HA
+
+font:
+  - file: "gfonts://Roboto"
+    id: font_10
+    size: 10
+  - file: "gfonts://Roboto"
+    id: font_20
+    size: 20
+  - file: "gfonts://Roboto"
+    id: font_30
+    size: 30
+  - file: "gfonts://Roboto"
+    id: font_40
+    size: 40
+  - file: "gfonts://Roboto"
+    id: font_100
+    size: 100
+  - file: "gfonts://Roboto"
+    id: font_120
+    size: 120
+
+time:
+  - platform: homeassistant
+    id: esptime
+
+image:
+  - file: mdi:thermometer
+    id: icon_temperature
+    resize: 40x40
+    type: BINARY
+    transparency: chroma_key
+  - file: mdi:home-thermometer
+    id: icon_home_temperature
+    resize: 40x40
+    type: BINARY
+    transparency: chroma_key
+  - file: mdi:water-percent
+    id: icon_humidity
+    resize: 40x40
+    type: BINARY
+    transparency: chroma_key
+  - file: mdi:alpha-a-circle
+    id: icon_a
+    resize: 60x60
+    type: BINARY
+    transparency: chroma_key
+  - file: mdi:alpha-m-circle
+    id: icon_m
+    resize: 60x60
+    type: BINARY
+    transparency: chroma_key
+  - file: mdi:alpha-o-circle
+    id: icon_o
+    resize: 60x60
+    type: BINARY
+    transparency: chroma_key
+
+globals:
+  - id: target_temp_set_room
+    # TODO: create an input_number in HA and restore its value on boot
+    type: float
+    restore_value: yes
+    initial_value: '20.5'
+  - id: room_mode
+    # TODO: create an input_number (better options?) in HA and restore its value on boot
+    type: int
+    initial_value: '1'  # 0=off, 1=auto, 2=manual
+
+sensor:
+  - platform: homeassistant
+    id: sensor_room_temperature
+    entity_id: sensor.temperatura_soggiorno
+    internal: true
+  - platform: homeassistant
+    id: sensor_room_humidity
+    entity_id: sensor.umidita_soggiorno
+    internal: true
+  # - platform: homeassistant
+  #   id: target_temp_set_room
+  #   entity_id: sensor.target_temp_set_leavingroom
+  #   internal: true
+
+spi:
+  clk_pin: GPIO12
+  mosi_pin: GPIO11
+
+display:
+  - platform: waveshare_epaper
+    model: 4.20in-v2
+    full_update_every: 30
+    reset_duration: 200ms
+    update_interval: 60s
+    cs_pin: GPIO10
+    dc_pin: GPIO46
+    busy_pin: GPIO48
+    reset_pin: GPIO47
+    id: eink
+    lambda: |-
+      it.print(0, 0, id(font_40), "Soggiorno");
+      it.strftime(320, 6, id(font_30), "%H:%M", id(esptime).now());
+      it.strftime(315, 33, id(font_20), "%d/%m/%y", id(esptime).now());
+
+      // main temperature and icon
+      it.image(10, 90, id(icon_home_temperature));
+      it.printf(50, 40, id(font_100), "%.1f", id(sensor_room_temperature).state);
+      // it.print(50, 40, id(font_100), "20.1");
+      it.print(235, 95, id(font_40), "°C");
+
+      // main humidity and icon
+      it.image(10, 155, id(icon_humidity));
+      it.printf(50, 150, id(font_40), "%.0f%%", id(sensor_room_humidity).state);
+      // it.print(50, 150, id(font_40), "56%");
+
+      // state of the radiator (manual/auto/off)
+      if (id(room_mode) == 1) {
+        // auto
+        it.image(310, 145, id(icon_a));
+      } else if (id(room_mode) == 2) {
+        // manual
+        it.image(310, 145, id(icon_m));
+      } else {
+        // off
+        it.image(310, 145, id(icon_o));
+      }
+
+      // set temperature
+      it.print(10, 240, id(font_40), "Set:");
+      it.image(85, 245, id(icon_temperature));
+      it.printf(130, 240, id(font_40), "%.1f°C", id(target_temp_set_room));
